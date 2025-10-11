@@ -1,0 +1,212 @@
+/**
+ * Next.js API route that proxies chat requests to the Python backend
+ * This properly streams the response from the Python backend
+ */
+
+import { NextRequest } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+
+// Python backend URL - can be configured via environment variable
+// Use 127.0.0.1 instead of localhost to force IPv4
+const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:8001';
+
+export const maxDuration = 300; // 5 minutes for large messages
+
+export async function POST(req: NextRequest) {
+  try {
+    // Authenticate user before proxying to backend
+    const supabase = await createClient();
+    if (!supabase) {
+      return new Response(
+        JSON.stringify({ error: 'Database connection failed' }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData?.user) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    // Get the request body
+    const body = await req.json();
+    
+    // Create an AbortController for the fetch
+    const controller = new AbortController();
+    
+    // Handle client disconnection - don't throw errors
+    req.signal.addEventListener('abort', () => {
+      try {
+        controller.abort();
+      } catch {
+        // Ignore abort errors
+      }
+    });
+    
+    // Forward the request to Python backend
+    let response: Response;
+    try {
+      response = await fetch(`${PYTHON_BACKEND_URL}/api/chat/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+          // Forward authentication headers if present
+          ...(req.headers.get('authorization') && {
+            'Authorization': req.headers.get('authorization')!
+          }),
+          // Include authenticated user ID
+          'X-User-ID': authData.user.id,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (fetchError: unknown) {
+      // Handle abort errors from fetch specifically
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        return new Response(
+          JSON.stringify({ error: 'Request cancelled by client' }),
+          { 
+            status: 499, // Client Closed Request
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+      }
+      throw fetchError;
+    }
+    
+    // Check if the response is ok
+    if (!response.ok) {
+      const errorText = await response.text();
+      
+      // Special handling for 402 Payment Required (insufficient credits)
+      if (response.status === 402) {
+        // Try to parse the error text to extract credit information
+        let errorMessage = errorText;
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.detail || errorData.error || errorText;
+        } catch {
+          // If parsing fails, use the raw text
+        }
+        
+        return new Response(
+          JSON.stringify({ 
+            error: errorMessage,
+            status: 402,
+            type: 'insufficient_credits'
+          }),
+          { 
+            status: 402,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+      }
+      
+      return new Response(
+        JSON.stringify({ error: errorText || 'Backend request failed' }),
+        { 
+          status: response.status,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+    
+    // Get the response body as a readable stream
+    const reader = response.body?.getReader();
+    if (!reader) {
+      return new Response(
+        JSON.stringify({ error: 'No response stream from backend' }),
+        { 
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+    
+    // Create a TransformStream to pass through the data
+    
+    const stream = new ReadableStream({
+      async start(streamController) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) {
+              streamController.close();
+              break;
+            }
+            
+            // Check if the request was aborted
+            if (req.signal.aborted || controller.signal.aborted) {
+              reader.cancel();
+              streamController.close();
+              break;
+            }
+            
+            // Pass through the chunk directly
+            streamController.enqueue(value);
+          }
+        } catch (error) {
+          // Handle abort errors gracefully
+          if (error instanceof Error && error.name === 'AbortError') {
+          } else {
+            // Stream error occurred
+          }
+          try {
+            reader.cancel();
+            streamController.close();
+          } catch {
+            // Ignore close errors
+          }
+        }
+      },
+      cancel() {
+        // Clean up when the stream is cancelled
+        controller.abort();
+        reader.cancel().catch(() => {});
+      }
+    });
+    
+    // Return the streaming response with proper SSE headers
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no', // Disable Nginx buffering
+        'Transfer-Encoding': 'chunked',
+      },
+    });
+    
+  } catch (error: unknown) {
+    // Handle different types of errors
+    if (error instanceof Error && error.name === 'AbortError') {
+      return new Response(
+        JSON.stringify({ error: 'Request cancelled' }),
+        { 
+          status: 499, // Client Closed Request
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+    
+    // Error forwarding request to backend
+    return new Response(
+      JSON.stringify({ error: 'Failed to connect to backend service' }),
+      { 
+        status: 503,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+  }
+}

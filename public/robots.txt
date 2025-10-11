@@ -1,0 +1,51 @@
+# LLMHub Robots.txt
+# Free AI Search Platform for Students
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /auth/error
+Disallow: /c/*/edit
+Disallow: /p/*/settings
+Allow: /c/*
+Allow: /p/*
+Allow: /share/*
+Allow: /join/*
+Allow: /discover
+Allow: /knowledge-base
+
+# Sitemap location
+Sitemap: https://llmhub.dev/sitemap.xml
+
+# Crawl-delay for responsible crawling
+Crawl-delay: 1
+
+# Search engine specific rules
+User-agent: Googlebot
+Allow: /
+Crawl-delay: 0
+
+User-agent: Bingbot
+Allow: /
+Crawl-delay: 0
+
+User-agent: Slurp
+Allow: /
+Crawl-delay: 1
+
+User-agent: DuckDuckBot
+Allow: /
+Crawl-delay: 1
+
+# Block bad bots
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: MJ12bot
+Disallow: /
+
+User-agent: DotBot
+Disallow: /

@@ -1,0 +1,357 @@
+"use client"
+
+import { Button } from "@/components/ui/button"
+import Link from "next/link"
+import { ArrowRight, Menu, X } from "lucide-react"
+import Image from "next/image"
+import { useState, useEffect } from "react"
+import { cn } from "@/lib/utils"
+import { motion, AnimatePresence } from "framer-motion"
+import { AnimatedThemeToggler } from "@/components/magicui/animated-theme-toggler"
+import { useTheme } from "next-themes"
+
+const navItems = [
+  { href: "/#hero", label: "Home" },
+  { href: "/#features", label: "Features" },
+  { href: "/#demo", label: "Demo" },
+  { href: "/#pricing", label: "Pricing" },
+  { href: "/changelog", label: "Changelog", external: true },
+  { href: "/blog", label: "Blog", external: true }
+]
+
+export function LandingHeader() {
+  const [scrolled, setScrolled] = useState(false)
+  const [activeSection, setActiveSection] = useState("hero")
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
+  const { theme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+  const [currentPath, setCurrentPath] = useState("")
+
+  useEffect(() => {
+    setMounted(true)
+    setCurrentPath(window.location.pathname)
+  }, [])
+
+  // Detect mobile device
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
+  // Handle scroll events for header appearance
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 10)
+      
+      // Only update active section based on scroll if we're on the home page
+      if (currentPath === '/' || currentPath === '') {
+        const sections = navItems.filter(item => !item.external).map(item => item.href.substring(2)) // substring(2) to skip "/#"
+        const scrollPosition = window.scrollY + 100
+
+        for (let i = sections.length - 1; i >= 0; i--) {
+          const section = document.getElementById(sections[i])
+          if (section && section.offsetTop <= scrollPosition) {
+            setActiveSection(sections[i])
+            break
+          }
+        }
+      }
+    }
+
+    window.addEventListener('scroll', handleScroll)
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [currentPath])
+
+  // Smooth scroll to section or navigate to external link
+  const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, href: string, external?: boolean) => {
+    if (external) {
+      // Allow normal navigation for external links
+      setMobileMenuOpen(false)
+      return
+    }
+    
+    // If we're not on the home page, navigate to home with the hash
+    if (currentPath !== '/' && currentPath !== '') {
+      // Allow default navigation to home with hash
+      setMobileMenuOpen(false)
+      return
+    }
+    
+    e.preventDefault()
+    const targetId = href.substring(2) // Skip "/#"
+    const targetElement = document.getElementById(targetId)
+    
+    if (targetElement) {
+      const offset = 80 // Account for fixed header
+      const elementPosition = targetElement.getBoundingClientRect().top
+      const offsetPosition = elementPosition + window.pageYOffset - offset
+
+      window.scrollTo({
+        top: offsetPosition,
+        behavior: 'smooth'
+      })
+    }
+
+    // Close mobile menu if open
+    setMobileMenuOpen(false)
+  }
+
+  return (
+    <>
+      <motion.header
+        initial={{ y: -100 }}
+        animate={{ y: 0 }}
+        transition={{ duration: 0.5, type: "spring", stiffness: 100 }}
+        className={cn(
+          "fixed top-0 left-0 right-0 z-50 transition-all duration-500",
+          isMobile 
+            ? "py-3" // Consistent padding on mobile
+            : scrolled ? "py-3" : "py-4"
+        )}
+      >
+        <div className={cn(
+          "container mx-auto",
+          isMobile ? "px-3" : "px-4"
+        )}>
+          <div
+            className={cn(
+              "relative mx-auto transition-all duration-500",
+              isMobile 
+                ? "" // Full width on mobile
+                : scrolled ? "max-w-4xl" : "max-w-5xl"
+            )}
+          >
+            {/* Background - solid on mobile, glass effect on desktop */}
+            <div
+              className={cn(
+                "absolute inset-0 border border-border/50 shadow-lg transition-all duration-500",
+                isMobile 
+                  ? "bg-background rounded-lg" // Solid background with less rounding on mobile
+                  : "bg-background/80 backdrop-blur-xl rounded-2xl", // Glass effect on desktop
+                scrolled
+                  ? "shadow-lg shadow-primary/5"
+                  : "shadow-2xl shadow-primary/10"
+              )}
+            />
+            
+            {/* Glass effect overlay - only on desktop */}
+            {!isMobile && (
+              <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-primary/5 via-transparent to-primary/5 opacity-50" />
+            )}
+            
+            {/* Content */}
+            <nav
+              className={cn(
+                "relative flex items-center justify-between transition-all duration-500 gap-4",
+                isMobile
+                  ? "px-4 py-3" // Consistent padding on mobile
+                  : scrolled ? "px-5 py-3" : "px-6 py-3"
+              )}
+            >
+              {/* Logo */}
+              <Link 
+                href="/" 
+                className="flex items-center gap-2 group flex-shrink-0"
+              >
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  transition={{ duration: 0.2 }}
+                  className={cn(
+                    "relative transition-all duration-500 flex-shrink-0",
+                    scrolled ? "h-9 w-9" : "h-10 w-10"
+                  )}
+                >
+                  {mounted && (
+                    <Image
+                      src={theme === "dark" ? "/logo_light.svg" : "/logo_dark.svg"}
+                      alt="LLMHub Logo"
+                      width={40}
+                      height={40}
+                      className="w-full h-full object-contain"
+                      priority
+                    />
+                  )}
+                </motion.div>
+                <span className={cn(
+                  "font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent transition-all duration-500 whitespace-nowrap",
+                  scrolled ? "text-lg" : "text-xl"
+                )}>
+                  LLMHub
+                </span>
+              </Link>
+
+              {/* Desktop Navigation */}
+              <ul className="hidden md:flex items-center gap-1 relative flex-1 justify-center">
+                {navItems.map((item) => {
+                  const isActive = item.external 
+                    ? currentPath === item.href 
+                    : (currentPath === '/' || currentPath === '') && activeSection === item.href.substring(2) // substring(2) to skip "/#"
+                  const ItemWrapper = item.external ? Link : 'a'
+                  
+                  return (
+                    <li key={item.label} className="relative">
+                      {isActive && (
+                        <motion.div
+                          layoutId="activeSection"
+                          className="absolute inset-x-[-4px] inset-y-[-2px] bg-primary/10 rounded-full border border-primary/20"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{
+                            type: "spring",
+                            bounce: 0.2,
+                            stiffness: 380,
+                            damping: 30,
+                          }}
+                        />
+                      )}
+                      {item.external ? (
+                        <Link
+                          href={item.href}
+                          className={cn(
+                            "relative px-3 py-2 rounded-full transition-all duration-200 cursor-pointer block whitespace-nowrap",
+                            scrolled ? "text-sm" : "text-base",
+                            isActive 
+                              ? "text-primary font-medium" 
+                              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                          )}
+                        >
+                          {item.label}
+                        </Link>
+                      ) : (
+                        <a
+                          href={item.href}
+                          onClick={(e) => handleNavClick(e, item.href, item.external)}
+                          className={cn(
+                            "relative px-3 py-2 rounded-full transition-all duration-200 cursor-pointer block whitespace-nowrap",
+                            scrolled ? "text-sm" : "text-base",
+                            isActive 
+                              ? "text-primary font-medium" 
+                              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                          )}
+                        >
+                          {item.label}
+                        </a>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+
+              {/* Desktop CTA Button and Theme Toggle */}
+              <div className="hidden md:flex items-center gap-2 flex-shrink-0">
+                <AnimatedThemeToggler 
+                  className={cn(
+                    "p-2 rounded-full transition-all hover:bg-muted/50",
+                    scrolled ? "h-9 w-9" : "h-10 w-10"
+                  )}
+                />
+                <Button 
+                  size={scrolled ? "sm" : "default"}
+                  className="rounded-full group whitespace-nowrap"
+                  asChild
+                >
+                  <Link href="/auth">
+                    Get Started
+                    <ArrowRight className={cn(
+                      "ml-2 transition-transform group-hover:translate-x-1",
+                      scrolled ? "h-3 w-3" : "h-4 w-4"
+                    )} />
+                  </Link>
+                </Button>
+              </div>
+
+              {/* Mobile Theme Toggle and Menu Button */}
+              <div className="flex items-center gap-2 md:hidden">
+                <AnimatedThemeToggler 
+                  className="p-2 rounded-full h-9 w-9 hover:bg-muted/50"
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full"
+                  onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                >
+                  {mobileMenuOpen ? (
+                    <X className="h-5 w-5" />
+                  ) : (
+                    <Menu className="h-5 w-5" />
+                  )}
+                </Button>
+              </div>
+            </nav>
+          </div>
+        </div>
+      </motion.header>
+
+      {/* Mobile Menu */}
+      <AnimatePresence>
+        {mobileMenuOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-x-0 top-16 z-40 md:hidden"
+          >
+            <div className="mx-4 rounded-2xl bg-background border border-border/50 shadow-xl p-4">
+              <nav className="flex flex-col gap-2">
+                {navItems.map((item) => {
+                  const isActive = item.external 
+                    ? currentPath === item.href 
+                    : (currentPath === '/' || currentPath === '') && activeSection === item.href.substring(2) // substring(2) to skip "/#"
+                  
+                  if (item.external) {
+                    return (
+                      <Link
+                        key={item.label}
+                        href={item.href}
+                        className={cn(
+                          "px-4 py-3 rounded-lg transition-colors",
+                          isActive
+                            ? "bg-primary/10 text-primary font-medium"
+                            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                        )}
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        {item.label}
+                      </Link>
+                    )
+                  }
+                  
+                  return (
+                    <a
+                      key={item.label}
+                      href={item.href}
+                      onClick={(e) => handleNavClick(e, item.href, item.external)}
+                      className={cn(
+                        "px-4 py-3 rounded-lg transition-colors",
+                        isActive
+                          ? "bg-primary/10 text-primary font-medium"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                      )}
+                    >
+                      {item.label}
+                    </a>
+                  )
+                })}
+                <Button className="mt-2 rounded-full" asChild>
+                  <Link href="/auth">
+                    Get Started
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Link>
+                </Button>
+              </nav>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  )
+}

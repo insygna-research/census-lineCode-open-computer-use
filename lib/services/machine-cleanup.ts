@@ -1,0 +1,238 @@
+import { createServiceClient } from "@/lib/supabase/service";
+import { getAzureContainerService } from "@/lib/azure/container-instances";
+
+interface CleanupStats {
+  deleted: number;
+  errors: number;
+  processed: number;
+}
+
+export class MachineCleanupService {
+  private intervalId: NodeJS.Timeout | null = null;
+  private isRunning = false;
+
+  constructor() {}
+
+  /**
+   * Start the periodic cleanup service (runs every 2 hours)
+   */
+  start() {
+    if (this.intervalId) {
+      console.log("Machine cleanup service is already running");
+      return;
+    }
+
+    console.log("Starting machine cleanup service - runs every 2 hours");
+
+    // Run immediately on start
+    this.runCleanup();
+
+    // Then run every 2 hours (2 * 60 * 60 * 1000 ms)
+    this.intervalId = setInterval(() => {
+      this.runCleanup();
+    }, 2 * 60 * 60 * 1000);
+  }
+
+  /**
+   * Stop the cleanup service
+   */
+  stop() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+      console.log("Machine cleanup service stopped");
+    }
+  }
+
+  /**
+   * Run the cleanup process
+   */
+  private async runCleanup(): Promise<CleanupStats> {
+    if (this.isRunning) {
+      console.log("Cleanup already in progress, skipping...");
+      return { deleted: 0, errors: 0, processed: 0 };
+    }
+
+    this.isRunning = true;
+    console.log("Starting machine cleanup for free users...");
+
+    const stats: CleanupStats = {
+      deleted: 0,
+      errors: 0,
+      processed: 0
+    };
+
+    try {
+      const supabase = createServiceClient();
+      if (!supabase) {
+        throw new Error("Failed to create Supabase service client");
+      }
+
+      // Find machines from free users that are older than 2 hours
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
+      // Use the same pattern as other parts of the codebase to bypass TypeScript issues
+      const { data: expiredMachines, error: queryError } = await (supabase as any)
+        .from("user_machines")
+        .select(`
+          id,
+          user_id,
+          container_name,
+          display_name,
+          azure_container_group,
+          azure_resource_group,
+          status,
+          created_at,
+          users!inner (
+            user_subscriptions (
+              status,
+              subscription_plans (
+                tier
+              )
+            )
+          )
+        `)
+        .lt('created_at', twoHoursAgo)
+        .neq('status', 'deleting')
+        .neq('status', 'error');
+
+      if (queryError) {
+        throw new Error(`Failed to query expired machines: ${queryError.message}`);
+      }
+
+      if (!expiredMachines || expiredMachines.length === 0) {
+        console.log("No expired machines found for cleanup");
+        return stats;
+      }
+
+      // Filter for free users only
+      const freeuserMachines = expiredMachines.filter((machine: any) => {
+        const userSubscriptions = (machine.users as any)?.user_subscriptions;
+
+        // If no subscriptions, user is free
+        if (!userSubscriptions || userSubscriptions.length === 0) {
+          return true;
+        }
+
+        // Check if user has active paid subscription
+        const hasActivePaidSubscription = userSubscriptions.some((sub: any) =>
+          sub.status === 'active' &&
+          sub.subscription_plans?.tier &&
+          sub.subscription_plans.tier !== 'free'
+        );
+
+        // Only cleanup machines for users without active paid subscriptions
+        return !hasActivePaidSubscription;
+      });
+
+      console.log(`Found ${freeuserMachines.length} machines from free users to cleanup`);
+      stats.processed = freeuserMachines.length;
+
+      // Process each machine
+      for (const machine of freeuserMachines) {
+        try {
+          await this.deleteMachine(machine, supabase);
+          stats.deleted++;
+          console.log(`Deleted machine: ${machine.display_name} (${machine.id})`);
+        } catch (error) {
+          stats.errors++;
+          console.error(`Failed to delete machine ${machine.id}:`, error);
+        }
+      }
+
+      console.log(`Cleanup completed: ${stats.deleted} deleted, ${stats.errors} errors`);
+
+    } catch (error) {
+      console.error("Machine cleanup failed:", error);
+      stats.errors++;
+    } finally {
+      this.isRunning = false;
+    }
+
+    return stats;
+  }
+
+  /**
+   * Delete a single machine (both Azure and database)
+   */
+  private async deleteMachine(machine: any, supabase: any): Promise<void> {
+    try {
+      // First, update status to deleting to prevent conflicts
+      await (supabase as any)
+        .from("user_machines")
+        .update({ status: 'deleting' })
+        .eq('id', machine.id);
+
+      // Try to delete from Azure if it's not a local machine
+      if (!machine.container_name?.startsWith('local-')) {
+        try {
+          // Check if Azure is properly configured before attempting deletion
+          if (process.env.AZURE_SUBSCRIPTION_ID && process.env.AZURE_RESOURCE_GROUP) {
+            const azureService = getAzureContainerService();
+            await azureService.deleteContainer(
+              machine.azure_container_group || machine.container_name,
+              machine.azure_resource_group
+            );
+            console.log(`Deleted Azure container: ${machine.azure_container_group || machine.container_name}`);
+          } else {
+            console.log(`Skipping Azure deletion for ${machine.id} - Azure not configured`);
+          }
+        } catch (azureError) {
+          // Log but don't fail - Azure resource might already be gone or service unavailable
+          console.warn(`Failed to delete Azure container for ${machine.id}:`, azureError);
+        }
+      }
+
+      // Delete from database
+      const { error: deleteError } = await (supabase as any)
+        .from("user_machines")
+        .delete()
+        .eq('id', machine.id);
+
+      if (deleteError) {
+        throw new Error(`Failed to delete machine from database: ${deleteError.message}`);
+      }
+
+    } catch (error) {
+      // If deletion fails, reset status back to original
+      try {
+        await (supabase as any)
+          .from("user_machines")
+          .update({ status: machine.status })
+          .eq('id', machine.id);
+      } catch (resetError) {
+        console.error(`Failed to reset machine status for ${machine.id}:`, resetError);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Manual cleanup trigger (for testing or admin use)
+   */
+  async runManualCleanup(): Promise<CleanupStats> {
+    console.log("Running manual machine cleanup...");
+    return await this.runCleanup();
+  }
+
+  /**
+   * Get service status
+   */
+  getStatus() {
+    return {
+      isRunning: this.isRunning,
+      hasScheduledCleanup: this.intervalId !== null,
+      nextCleanupIn: this.intervalId ? "Within 2 hours" : "Not scheduled"
+    };
+  }
+}
+
+// Singleton instance
+let cleanupService: MachineCleanupService | null = null;
+
+export function getMachineCleanupService(): MachineCleanupService {
+  if (!cleanupService) {
+    cleanupService = new MachineCleanupService();
+  }
+  return cleanupService;
+}

@@ -1,0 +1,76 @@
+/* Mobile performance optimizations */
+@media (max-width: 768px) {
+  /* Disable heavy animations on mobile */
+  * {
+    animation-duration: 0.3s !important;
+    animation-delay: 0s !important;
+  }
+
+  /* Disable complex transitions on mobile */
+  .transition-all {
+    transition: opacity 0.2s ease !important;
+  }
+
+  /* Reduce shadow complexity */
+  .shadow-sm,
+  .shadow,
+  .shadow-md,
+  .shadow-lg,
+  .shadow-xl,
+  .shadow-2xl {
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1) !important;
+  }
+
+  /* Disable backdrop filters on mobile */
+  .backdrop-blur,
+  .backdrop-blur-sm,
+  .backdrop-blur-md,
+  .backdrop-blur-lg,
+  .backdrop-blur-xl {
+    backdrop-filter: none !important;
+    background-color: rgb(var(--background) / 0.95) !important;
+  }
+
+  /* Optimize blur effects */
+  .blur-sm,
+  .blur,
+  .blur-md,
+  .blur-lg,
+  .blur-xl,
+  .blur-2xl,
+  .blur-3xl {
+    filter: blur(8px) !important;
+  }
+
+  /* Disable will-change on mobile to save memory */
+  [class*="animate-"] {
+    will-change: auto !important;
+  }
+
+  /* Optimize scrolling */
+  .overflow-y-auto,
+  .overflow-y-scroll,
+  .overflow-x-auto,
+  .overflow-x-scroll {
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+  }
+
+  /* Reduce re-paints during scroll */
+  .overflow-y-auto > * {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+  }
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
